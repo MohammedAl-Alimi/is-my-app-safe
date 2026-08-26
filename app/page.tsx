@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Fragment } from "react";
 import type { ScanResult, Finding } from "@/lib/types";
 import { chapterLink, PLAYBOOK_URL } from "@/lib/types";
 
@@ -121,9 +121,9 @@ function Results({ r }: { r: ScanResult }) {
               <span className={`sev ${f.severity}`}>{f.severity}</span>
             )}
           </div>
-          <div className="f-detail" dangerouslySetInnerHTML={{ __html: mdCode(f.detail) }} />
+          <div className="f-detail">{renderCode(f.detail)}</div>
           {f.fix && (f.status === "fail" || f.status === "warn") && (
-            <div className="f-fix" dangerouslySetInnerHTML={{ __html: "<b>Fix:</b> " + mdCode(f.fix) }} />
+            <div className="f-fix"><b>Fix:</b> {renderCode(f.fix)}</div>
           )}
           <a className="chapter-link" href={chapterLink(f.chapter)} target="_blank" rel="noopener noreferrer">
             → Playbook ch{f.chapter}: {f.chapterTitle}
@@ -163,9 +163,16 @@ function Results({ r }: { r: ScanResult }) {
   );
 }
 
-// Minimal, safe `code` span rendering. Input is our own trusted strings, but we
-// still escape everything and only allow backtick-delimited code — no raw HTML.
-function mdCode(s: string): string {
-  const esc = s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return esc.replace(/`([^`]+)`/g, "<code>$1</code>");
+// Render backtick-delimited spans as <code> React nodes. No HTML sink: finding
+// text can include values echoed from the scanned site (headers, CORS origins),
+// so we never build an HTML string (Agent Security Playbook ch18). React escapes
+// every text node, so third-party content can't inject markup.
+function renderCode(s: string): React.ReactNode {
+  return s.split(/(`[^`]+`)/g).map((part, i) =>
+    part.startsWith("`") && part.endsWith("`") ? (
+      <code key={i}>{part.slice(1, -1)}</code>
+    ) : (
+      <Fragment key={i}>{part}</Fragment>
+    ),
+  );
 }
