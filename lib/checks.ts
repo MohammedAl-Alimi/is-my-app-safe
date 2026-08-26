@@ -10,40 +10,76 @@ type Fetched = {
   headers: Headers;
   status: number;
   body: string;
+  finalUrl: string; // URL of the response we actually read (after safe redirects)
 };
 
-async function safeFetch(url: string, opts: RequestInit = {}): Promise<Fetched | null> {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-  try {
-    const res = await fetch(url, {
-      ...opts,
-      signal: ctrl.signal,
-      redirect: opts.redirect ?? "follow",
-      headers: { "User-Agent": UA, ...(opts.headers || {}) },
-    });
-    // Read at most MAX_BYTES so a huge/streamed body can't exhaust us.
-    const reader = res.body?.getReader();
-    let body = "";
-    if (reader) {
-      const dec = new TextDecoder();
-      let total = 0;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        total += value.byteLength;
-        body += dec.decode(value, { stream: true });
-        if (total >= MAX_BYTES) {
-          await reader.cancel();
-          break;
-        }
-      }
+const MAX_HOPS = 5;
+
+async function readCapped(res: Response): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) return "";
+  const dec = new TextDecoder();
+  let body = "";
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    body += dec.decode(value, { stream: true });
+    if (total >= MAX_BYTES) {
+      await reader.cancel();
+      break;
     }
-    return { res, headers: res.headers, status: res.status, body };
-  } catch {
-    return null;
-  } finally {
+  }
+  return body;
+}
+
+/**
+ * Fetch with SSRF-safe redirect handling (Agent Security Playbook ch13).
+ * Redirects are NEVER followed by the platform; we resolve each hop and
+ * re-run the full SSRF guard on it before making the next request — otherwise
+ * a scanned server could 302 us to http://169.254.169.254/ and read metadata.
+ * Pass `redirect: "manual"` to not follow at all (used for exposed-file probes).
+ */
+async function safeFetch(url: string, opts: RequestInit = {}): Promise<Fetched | null> {
+  const noFollow = opts.redirect === "manual";
+  let current = url;
+  for (let hop = 0; ; hop++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(current, {
+        ...opts,
+        signal: ctrl.signal,
+        redirect: "manual", // we follow by hand, re-validating each hop
+        headers: { "User-Agent": UA, ...(opts.headers || {}) },
+      });
+    } catch {
+      clearTimeout(t);
+      return null;
+    }
+    const isRedirect = res.status >= 300 && res.status < 400 && res.headers.has("location");
+    if (!isRedirect || noFollow) {
+      const body = await readCapped(res).catch(() => "");
+      clearTimeout(t);
+      return { res, headers: res.headers, status: res.status, body, finalUrl: current };
+    }
+    // A redirect we intend to follow — validate the destination first.
     clearTimeout(t);
+    if (hop >= MAX_HOPS) return null;
+    let next: string;
+    try {
+      next = new URL(res.headers.get("location")!, current).toString();
+    } catch {
+      return null;
+    }
+    try {
+      await assertSafeTarget(next); // refuses private/loopback/metadata/non-http hops
+    } catch {
+      return null; // an unsafe redirect target ends the fetch, safely
+    }
+    current = next;
   }
 }
 
@@ -65,7 +101,7 @@ function checkHttps(finalUrl: string, httpProbe: Fetched | null | "n/a"): Findin
   }
   if (httpProbe && httpProbe !== "n/a") {
     // httpProbe followed redirects; if it ended on https the site upgrades HTTP.
-    const endedHttps = httpProbe.res.url.startsWith("https://");
+    const endedHttps = httpProbe.finalUrl.startsWith("https://");
     if (!endedHttps && httpProbe.status >= 200) {
       return {
         id: "https", title: "HTTP → HTTPS redirect", status: "warn", severity: "medium",
@@ -381,7 +417,7 @@ export async function runScan(input: string): Promise<ScanResult> {
   if (!home) {
     throw new UnsafeUrlError("Couldn't reach that site (it may be down, blocking bots, or too slow).");
   }
-  const finalUrl = home.res.url || target.toString();
+  const finalUrl = home.finalUrl || target.toString();
   const h = home.headers;
 
   // HTTP-version probe (best effort) for redirect check
