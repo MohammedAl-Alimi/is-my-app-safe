@@ -1,0 +1,24 @@
+{
+  "name": "is-my-app-safe",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A passive surface security scanner for web apps, mapped to the Agent Security Playbook.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "15.5.4",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.7",
+    "@types/react": "19.1.8",
+    "@types/react-dom": "19.1.6",
+    "typescript": "5.7.3"
+  }
+}
