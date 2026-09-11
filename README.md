@@ -2,6 +2,10 @@
 
 **A passive surface-security scanner for web apps.** Enter a URL, get an instant read-only security check — mapped to every relevant chapter of the [Agent Security Playbook](https://github.com/MohammedAl-Alimi/agent-security-playbook).
 
+### ▶ [Try it live: is-my-app-safe.vercel.app](https://is-my-app-safe.vercel.app)
+
+![Demo: scanning a URL and getting a graded security report](assets/demo.gif)
+
 It's the "SSL Labs / Mozilla Observatory" idea, but the findings speak the playbook's language and it's honest about the large set of things a URL scan physically cannot see.
 
 ---
